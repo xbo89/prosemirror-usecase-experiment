@@ -1,0 +1,199 @@
+<template>
+  <div id="editor" style="margin-bottom: 23px"></div>
+
+  <div style="display: none" id="content">
+    <h3>Hello ProseMirror</h3>
+
+    <p>This is editable text. You can focus it and start typing.</p>
+
+    <p>
+      To apply styling, you can select a piece of text and manipulate its
+      styling from the menu. The basic schema supports <em>emphasis</em>,
+      <strong>strong text</strong>,
+      <a href="http://marijnhaverbeke.nl/blog">links</a>,
+      <code>code font</code>, and <img src="/img/smiley.png" /> images.
+    </p>
+
+    <p>
+      Block-level structure can be manipulated with key bindings (try
+      ctrl-shift-2 to create a level 2 heading, or enter in an empty textblock
+      to exit the parent block), or through the menu.
+    </p>
+
+    <p>
+      Try using the “list” item in the menu to wrap this paragraph in a numbered
+      list.
+    </p>
+  </div>
+</template>
+
+<script setup>
+import { onMounted } from "vue";
+// 导入必要的库和组件
+import { EditorState, TextSelection } from "prosemirror-state";
+import { EditorView } from "prosemirror-view";
+import { Schema, DOMParser } from "prosemirror-model";
+import { addListNodes } from "prosemirror-schema-list";
+import { exampleSetup } from "prosemirror-example-setup";
+import { schema } from "prosemirror-schema-basic";
+import dragula from "dragula";
+
+// 扩展基本schema以支持拖拽按钮
+const mySchema = new Schema({
+  nodes: addListNodes(schema.spec.nodes, "paragraph block*", "block"),
+  marks: schema.spec.marks,
+});
+const initDragula = () => {
+  const drake = dragula([this.editorView.dom], {
+    moves: (el, container, handle) => handle.classList.contains("drag-handle"),
+  });
+
+  drake.on("drop", (el, target, source, sibling) => {
+    const pos = this.editorView.posAtDOM(el, 0);
+    const node = this.editorView.state.doc.nodeAt(pos);
+
+    const targetPos = sibling
+      ? this.editorView.posAtDOM(sibling, 0)
+      : this.editorView.state.doc.content.size;
+
+    this.editorView.dispatch(
+      this.editorView.state.tr
+        .delete(pos, pos + node.nodeSize)
+        .insert(targetPos, node)
+    );
+    drake.cancel(true);
+  });
+};
+onMounted(() => {
+  window.view = new EditorView(document.querySelector("#editor"), {
+    state: EditorState.create({
+      doc: DOMParser.fromSchema(mySchema).parse(
+        document.querySelector("#content")
+      ),
+      plugins: exampleSetup({ schema: mySchema }),
+    }),
+    nodeViews: {
+      paragraph: (node, view, getPos) => {
+        const dragHandle = createDragHandle();
+        const dragHandleContainer = document.createElement("div");
+        dragHandleContainer.className = "drag-handle-container";
+        dragHandleContainer.appendChild(dragHandle);
+
+        const selectButton = createSelectButton(view, getPos);
+        const selectButtonContainer = document.createElement("div");
+        selectButtonContainer.className = "select-button-container";
+        selectButtonContainer.appendChild(selectButton);
+
+        const paragraph = document.createElement("div");
+        paragraph.className = "paragraph";
+        paragraph.appendChild(dragHandleContainer);
+        paragraph.appendChild(selectButtonContainer);
+
+        const contentDOM = document.createElement("div");
+        paragraph.appendChild(contentDOM);
+
+        paragraph.addEventListener("dragover", (event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        });
+
+        paragraph.addEventListener("dragover", (event) => {
+          event.preventDefault();
+        });
+
+        paragraph.addEventListener("drop", (event) => {
+          event.preventDefault();
+          const fromIndex = parseInt(event.dataTransfer.getData("text/plain"));
+          const toIndex = getPos();
+          moveParagraph(view, fromIndex, toIndex);
+        });
+
+        return {
+          dom: paragraph,
+          contentDOM,
+        };
+      },
+    },
+  });
+});
+const moveParagraph = (view, fromIndex, toIndex) => {
+  const { state } = view;
+  const { tr } = state;
+  const fromNode = state.doc.nodeAt(fromIndex);
+  if (fromIndex > toIndex) {
+    tr.delete(fromIndex, fromIndex + fromNode.nodeSize);
+    tr.insert(toIndex, fromNode);
+  } else {
+    tr.insert(toIndex + fromNode.nodeSize, fromNode);
+    tr.delete(fromIndex, fromIndex + fromNode.nodeSize);
+  }
+  view.dispatch(tr);
+};
+const closest = (el, selector) => {
+  const matches =
+    el.matches ||
+    el.webkitMatchesSelector ||
+    el.mozMatchesSelector ||
+    el.msMatchesSelector ||
+    el.oMatchesSelector;
+  while (el && !matches.call(el, selector)) {
+    el = el.parentElement;
+  }
+  return el;
+};
+const createDragHandle = () => {
+  const dragHandle = document.createElement("span");
+  dragHandle.className = "drag-handle";
+  dragHandle.textContent = "☰";
+  dragHandle.draggable = true;
+
+  dragHandle.addEventListener("dragstart", (event) => {
+    event.dataTransfer.setData("text/plain", ""); // for Firefox
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setDragImage(dragHandle, 0, 0);
+    // closest(event.target, ".paragraph").classList.add("dragging");
+  });
+
+  dragHandle.addEventListener("dragend", (event) => {
+    // closest(event.target, ".paragraph").classList.remove("dragging");
+  });
+  return dragHandle;
+};
+
+const createSelectButton = (view, getPos) => {
+  const button = document.createElement("button");
+  button.className = "select-button";
+  button.textContent = "Select";
+  button.addEventListener("mousedown", () => {
+    const start = getPos();
+    const end = start + view.state.doc.nodeAt(start).nodeSize - 2;
+    const selection = TextSelection.create(view.state.doc, start + 1, end);
+    view.dispatch(view.state.tr.setSelection(selection));
+  });
+  return button;
+};
+</script>
+
+<style>
+#app {
+  font-family: Avenir, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.drag-handle,
+.select-button {
+  display: inline;
+}
+.paragraph {
+  position: relative;
+}
+.drag-handle-container,
+.select-button-container {
+  position: absolute;
+  left: -24px;
+  top: 0;
+}
+.select-button-container {
+  left: -48px;
+}
+</style>
